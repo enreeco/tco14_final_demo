@@ -78,7 +78,7 @@ Resources
 
 **Demo video**: http://www.screencast.com/t/T5XOBHmNoj
 
-**GitHub repo**: https://github.com/enreeco/tco14
+**GitHub repo**: https://github.com/enreeco/tco14_final_demo
 
 **Gmail User Admin** (if you don't want to create your own app): 
 
