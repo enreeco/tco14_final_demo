@@ -1,0 +1,340 @@
+<apex:component controller="GDriveConnectorController">
+    <link rel="stylesheet" type="text/css" href="/resource/ScriptsAndStyles/css/bootstrap.min.css"/>
+    <apex:includeScript value="/resource/ScriptsAndStyles/js/jquery-2.1.1.min.js" />
+    <apex:attribute name="objId" type="ID" required="true" description="" assignTo="{!sobjectId}"/>
+    
+    <div id="_filePickerGroup" style="display: none" class="container">
+        <div class="form">
+            <div class="form-group">
+                <div class="col-xs-6">
+                    <input type="file" id="filePicker"  class="form-control"/>
+                    <p class="help-block">Select a file to be uploaded to GDrive</p>
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="col-xs-6">
+                    <button type="file" id="btnUpload"  class="btn btn-block btn-primary">Upload</button>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+    
+    <div class="col-offset-sx-4 col-xs-4">
+        <input type="button" class="btn btn-warning " 
+               id="authorizeButton" style="display: none" value="Authorize GDrive application" />
+    </div>
+    
+    <div id="_loading" class="container">
+        <div class="text-center">
+            <h4><img src="/img/loading32.gif" width="24"/> Loading GDrive content...</h4>
+        </div>
+    </div>
+    
+    
+    <!--this will show the list of the files or an "empty" message -->
+    <div id="_fileList" class="container" ></div>
+    
+    <!-- this is used to authorize app -->
+    <!--<iframe id="_gdriveList" src="" width="100%" height="100%" style="width: 100%; height: 100%;" frameborder="0"></iframe>-->
+    <div id="_noAccess" style="display:none;" class="text-center">
+        <h3>Request access before continuing.</h3>
+        <h4><a href="" id="_openPageLink" target="_blank">Click here to open the request page again.</a></h4>
+        <h4>Reload the page after access granted.</h4>
+    </div>
+    
+    <script type="text/javascript">
+    //jQuery(function(){
+    var displayFolderURL = "https://drive.google.com/embeddedfolderview?id={0}#list";
+    var rootFolderID = "{!GDriveRoolFolderId}";
+    var rootFolderName = "{!GDriveRoolFolderName}";
+    var objectFolderId = null;
+    var CLIENT_ID = '{!GDriveClientId}';
+    var SCOPES = 'https://www.googleapis.com/auth/drive';
+    
+    /**
+               * Called when the client library is loaded to start the auth flow.
+               */
+    function handleClientLoad() {
+        window.setTimeout(checkAuth, 100);
+    }
+    
+    /**
+               * Check if the current user has authorized the application.
+            */
+    function checkAuth() {
+        gapi.auth.authorize(
+            {'client_id': CLIENT_ID, 'scope': SCOPES, 'immediate': true},
+            handleAuthResult);
+    }
+    
+    /*
+             * gets all files inside a given folder (id)
+             */
+    function retrieveAllFiles(parentFolder, callback) {
+        var qString = "trashed = false and '"+parentFolder+"' in parents and mimeType != 'application/vnd.google-apps.folder'";
+        console.log(qString);
+        var retrievePageOfFiles = function(request, result) {
+            request.execute(function(resp) {
+                result = result.concat(resp.items);
+                var nextPageToken = resp.nextPageToken;
+                if (nextPageToken) {
+                    /*
+                            request = gapi.client.drive.files.list({
+                                'pageToken': nextPageToken
+                            });
+                            */
+                            request = gapi.client.request({
+                                'path': '/drive/v2/files?q='+encodeURIComponent(qString)+'&pageToken='+nextPageToken,
+                                'method': 'GET',
+                            });
+                            retrievePageOfFiles(request, result);
+                        } else {
+                            callback(result);
+                        }
+                    });
+                }
+                
+                var initialRequest = gapi.client.request({
+                    'path': '/drive/v2/files?q='+encodeURIComponent(qString),
+                    'method': 'GET',
+                });
+                retrievePageOfFiles(initialRequest, []);
+            }
+    
+    /*
+             * Queries a specific folder
+             */
+    function queryFolder(objId, parentFolder, callback){
+        
+        var qString = "trashed =false and mimeType = 'application/vnd.google-apps.folder' and title = '"+objId+"'";
+        if(parentFolder){
+            qString+=" and '"+parentFolder+"' in parents"
+        }
+        var request = gapi.client.request({
+            'path': '/drive/v2/files?q='+encodeURIComponent(qString),
+            'method': 'GET',
+        });
+        
+        //var request = gapi.client.files.list({q:qString});
+        if (!callback) {
+            callback = function(file) {
+                console.log(file)
+            };
+        }
+        request.execute(callback);
+    }
+    /**
+               * Called when authorization server replies.
+               *
+               * @param {Object} authResult Authorization result.
+               */
+    function handleAuthResult(authResult) {
+        var authButton = jQuery('#authorizeButton');
+        var filePicker = jQuery('#filePicker');
+        authButton.hide();
+        jQuery('#_filePickerGroup').hide();
+        if (authResult && !authResult.error) {
+            
+            //checks if the user can access the "root" folder (that contains all files)
+            queryFolder(rootFolderName, null, function(file){
+                if(!file.items || !file.items.length){
+                    console.log('no access to root folder '+rootFolderName);
+                    jQuery('#_noAccess').show();
+                    jQuery('#_openPageLink').get(0).href = displayFolderURL.replace('{0}',rootFolderID);
+                    jQuery('#_loading').hide();
+                }else{
+                    console.log('Access confirmed to root folder '+rootFolderName);
+                    var folderFound = function(folder){
+                        
+                        console.log(folder);
+                        //jQuery('#_gdriveList').get(0).src = '';
+                        objectFolderId = folder.id;
+                        
+                        retrieveAllFiles(folder.id, function(result){
+                            console.log(result);
+                            jQuery('#_filePickerGroup').show();
+                            jQuery('#btnUpload').bind('click',uploadFile);
+                            jQuery('#_loading').hide();
+                            //creates the table containing all the files
+                            var container = jQuery('#_fileList');
+                            var table = jQuery('<div class="container"/>');
+                            var row = jQuery('<div class="row" />');
+                            row = jQuery('<div class="row" />');
+                            table.append(row);
+                            row = jQuery('<div class="row" />');
+                            var col0 = jQuery('<div class="col-xs-6">File</div>');
+                            var col1 = jQuery('<div class="col-xs-3">Last Mod.</div>');
+                            var col2 = jQuery('<div class="col-xs-3">By</div>');
+                            row.append(col0);
+                            row.append(col1);
+                            row.append(col2);
+                            table.append(row);
+                            for(var i = 0; i < result.length; i++){
+                                row = jQuery('<div class="row" />');
+                                col0 = jQuery('<div class="col-xs-6"/>');
+                                var img = jQuery('<img src="'+result[i].iconLink+'"/>');
+                                var title = jQuery('<a target="_blank" href="'+result[i].alternateLink+'" />');
+                                title.html(result[i].title);
+                                col0.append(jQuery('<div/>').append(img).append(title));
+                                //col0.append(title);
+                                row.append(col0);
+                                col1 = jQuery('<div class="col-xs-3"/>');
+                                col1.html((new Date(result[i].modifiedDate)).toLocaleString());
+                                row.append(col1);
+                                col2 = jQuery('<div class="col-xs-3"/>');
+                                col2.html(result[i].lastModifyingUserName);
+                                row.append(col2);
+                                table.append(row);
+                            }
+                            container.append(table);
+                        });
+                        
+                    };
+                    //has access to the root folder, so search for the current object's ID
+                    queryFolder('{!objId}', rootFolderID, function(folder){
+                        if(!folder.items || !folder.items.length){
+                            console.log('Creating folder {!objId}');
+                            insertFolder('{!objId}', folderFound);
+                        }else{
+                            folderFound(folder.items[0]);
+                        }
+                        
+                    });
+                }
+            });
+        } else {
+            // No access token could be retrieved, show the button to start the authorization flow.
+            authButton.show();
+            jQuery('#_loading').hide();
+            authButton.bind('click', function() {
+                gapi.auth.authorize(
+                    {'client_id': CLIENT_ID, 'scope': SCOPES, 'immediate': false},
+                    handleAuthResult);
+            });
+        }
+    }
+    
+    /**
+               * Start the file upload.
+               *
+               * @param {Object} evt Arguments from the file selector.
+               */
+    function uploadFile(evt) {
+        gapi.client.load('drive', 'v2', function() {
+            var filePicker = jQuery('#filePicker');
+            if(!filePicker[0].files || !filePicker[0].files.length){
+                alert('Select a file');
+                return;
+            }
+            var file = filePicker[0].files[0];
+            insertFile(file, [{key: 'sfId', value: '{!sobjectId}'},
+                              {key: 'sfType', value: '{!SObjectAPIName}'}
+                             ]);
+        });
+    }
+    
+    /**
+               * Insert new folder.
+               *
+               * @param {File} fileData File object to read data from.
+               * @param {Function} callback Function to call when the request is complete.
+               */
+    function insertFolder(folderName, callback) {
+        
+        const boundary = '-------314159265358979323846';
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const close_delim = "\r\n--" + boundary + "--";
+        var metadata = {
+            'title': folderName,
+            'mimeType': "application/vnd.google-apps.folder",
+            //https://developers.google.com/drive/web/folder
+            'parents' : [{"id": rootFolderID, "kind": "drive#fileLink",}]
+        };
+        var multipartRequestBody =
+            delimiter +
+            'Content-Type: application/json\r\n\r\n' +
+            JSON.stringify(metadata) +
+            close_delim;
+        
+        var request = gapi.client.request({
+            'path': '/upload/drive/v2/files',
+            'method': 'POST',
+            'params': {'uploadType': 'multipart'},
+            'headers': {
+                'Content-Type': 'multipart/mixed; boundary="' + boundary + '"'
+            },
+            'body': multipartRequestBody});
+        if (!callback) {
+            callback = function(file) {
+                console.log(file);
+            };
+        }
+        
+        request.execute(callback);
+        
+    }
+    
+    /**
+               * Insert new file.
+               *
+               * @param {File} fileData File object to read data from.
+               * @param {Function} callback Function to call when the request is complete.
+               */
+    function insertFile(fileData, properties, callback) {
+        var loader = jQuery('#_loading');
+        var filePickerGroup = jQuery('#_filePickerGroup');
+        var iframe = jQuery('#_gdriveList');
+        filePickerGroup.hide();
+        loader.show();
+        const boundary = '-------314159265358979323846';
+        const delimiter = "\r\n--" + boundary + "\r\n";
+        const close_delim = "\r\n--" + boundary + "--";
+        
+        var reader = new FileReader();
+        reader.readAsBinaryString(fileData);
+        reader.onload = function(e) {
+            var contentType = fileData.type || 'application/octet-stream';
+            var metadata = {
+                'title': fileData.name,
+                'mimeType': contentType,
+                //https://developers.google.com/drive/web/folder
+                'parents' : [{"id": objectFolderId, "kind": "drive#fileLink",}],
+                'properties': (properties || [])
+            };
+            
+            var base64Data = btoa(reader.result);
+            var multipartRequestBody =
+                delimiter +
+                'Content-Type: application/json\r\n\r\n' +
+                JSON.stringify(metadata) +
+                delimiter +
+                'Content-Type: ' + contentType + '\r\n' +
+                'Content-Transfer-Encoding: base64\r\n' +
+                '\r\n' +
+                base64Data +
+                close_delim;
+            
+            var request = gapi.client.request({
+                'path': '/upload/drive/v2/files',
+                'method': 'POST',
+                'params': {'uploadType': 'multipart'},
+                'headers': {
+                    'Content-Type': 'multipart/mixed; boundary="' + boundary + '"'
+                },
+                'body': multipartRequestBody});
+            if (!callback) {
+                callback = function(file) {
+                    console.log(file);
+                    window.location.reload();
+                    
+                };
+            }
+            
+            request.execute(callback);
+        }
+    }
+    //});
+    </script>
+    <script type="text/javascript" src="https://apis.google.com/js/client.js?onload=handleClientLoad"></script>
+    </apex:component>

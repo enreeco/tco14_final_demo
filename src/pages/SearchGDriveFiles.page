@@ -1,0 +1,281 @@
+<apex:page controller="GDriveConnectorController" tabStyle="GDrive_Files__tab">
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1" />
+    <link rel="stylesheet" type="text/css" href="/resource/ScriptsAndStyles/css/bootstrap-namespaced.min.css"/>
+    <apex:includeScript value="/resource/ScriptsAndStyles/js/jquery-2.1.1.min.js" />
+    <style>
+        .bootstrap-sf1{
+        background-color: white;
+        }
+    </style>
+    <apex:sectionHeader title="GDrive Search" />
+    <div style="width:90%">
+        
+        
+        <div class="bootstrap-sf1 col-offset-sx-4 col-xs-4">
+            <input type="button" class="bootstrap-sf1 btn btn-warning " 
+                   id="authorizeButton" style="display: none" value="Authorize GDrive application" />
+        </div>
+        
+        <div id="_searchBox" class="bootstrap-sf1" style="display:none">
+            <p>
+                <b>GDrive Easy Connector search</b>
+            </p>
+            <div class="bootstrap-sf1 form">
+                <div class="bootstrap-sf1 form-group">
+                    <div class="bootstrap-sf1 col-xs-6">
+                        <input type="text" id="textFilter" placeholder="Search files..." class="bootstrap-sf1 form-control"/>
+                    </div>
+                </div>
+                <div class="bootstrap-sf1 form-group">
+                    <div class="bootstrap-sf1 col-xs-6">
+                        <button id="btnUpload"  class="bootstrap-sf1 btn btn-block btn-primary">Search</button>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+        
+        <div id="_loading" class="bootstrap-sf1 container">
+            <div class="bootstrap-sf1 text-center">
+                <h4><img src="/img/loading32.gif" width="24"/> Loading GDrive content...</h4>
+            </div>
+        </div>
+        
+        <!--this will show the list of the files or an "empty" message -->
+        <div id="_fileList" class="bootstrap-sf1 container" ></div>
+    </div>    
+    <script type="text/javascript">
+    var displayFolderURL = "https://drive.google.com/embeddedfolderview?id={0}#list";
+    var rootFolderID = "{!GDriveRoolFolderId}";
+    var rootFolderName = "{!GDriveRoolFolderName}";
+    var CLIENT_ID = '{!GDriveClientId}';
+    var SCOPES = 'https://www.googleapis.com/auth/drive';
+    
+    /**
+		* Called when the client library is loaded to start the auth flow.
+        */
+    function handleClientLoad() {
+        window.setTimeout(checkAuth, 100);
+    }
+    
+    /**
+		* Check if the current user has authorized the application.	
+        */
+    function checkAuth() {
+        gapi.auth.authorize(
+            {'client_id': CLIENT_ID, 'scope': SCOPES, 'immediate': true},
+            handleAuthResult);
+    }
+    
+    function drawResultsTable(files, idsToNames){
+        if(!idsToNames) idsToNames = {};
+        //creates the table containing all the files
+        var container = jQuery('#_fileList');
+        container.html('');
+        //var table = jQuery('<div class="bootstrap-sf1 container"/>');
+        var table = container;
+        var row = jQuery('<div class="bootstrap-sf1 row" />');
+        /*
+            table.append(row);
+            row = jQuery('<div class="bootstrap-sf1 row" />');*/
+            var col0 = jQuery('<div class="bootstrap-sf1 col-xs-3">File</div>');
+            var col1 = jQuery('<div class="bootstrap-sf1 col-xs-3">Parent</div>');
+            var col2 = jQuery('<div class="bootstrap-sf1 col-xs-2">Last Mod.</div>');
+            var col3 = jQuery('<div class="bootstrap-sf1 col-xs-2">By</div>');
+            row.append(col0);
+            row.append(col1);
+            row.append(col2);
+            row.append(col3);
+            table.append(row);
+            for(var i = 0; i < files.length; i++){
+                row = jQuery('<div class="bootstrap-sf1 row" />');
+                col0 = jQuery('<div class="bootstrap-sf1 col-xs-3"/>');
+                var img = jQuery('<img src="'+files[i].iconLink+'"/>');
+                var title = jQuery('<a target="_blank" href="'+files[i].alternateLink+'" />');
+                title.html(files[i].title);
+                col0.append(jQuery('<div/>').append(img).append(title));
+                //col0.append(title);
+                row.append(col0);
+                col1 = jQuery('<div class="bootstrap-sf1 col-xs-3"/>');
+                var sobjectId = null;
+                var sobjectType = null;
+                //search for the right properties (sfId)
+                if(files[i].properties && files[i].properties.length){
+                    for(var p = 0; p < files[i].properties.length; p++){
+                        if(files[i].properties[p].key === 'sfId'){
+                            sobjectId = files[i].properties[p].value;
+                        }
+                        if(files[i].properties[p].key === 'sfType'){
+                            sobjectType = files[i].properties[p].value;
+                        }
+                        if(sobjectType && sobjectId) break;
+                    }
+                }
+                if(!sobjectId){
+                    col1.html("");
+                }else{
+                    var nameField = idsToNames[sobjectId];
+                    if(!nameField) nameField = sobjectType || 'Parent';
+                    col1.append(jQuery('<a />').attr('href','/'+sobjectId).attr('target','_blank').html(nameField));
+                }
+                row.append(col1);
+                col2 = jQuery('<div class="bootstrap-sf1 col-xs-2"/>');
+                col2.html((new Date(files[i].modifiedDate)).toLocaleString());
+                row.append(col2);
+                col3 = jQuery('<div class="bootstrap-sf1 col-xs-2"/>');
+                col3.html(files[i].lastModifyingUserName);
+                row.append(col3);
+                table.append(row);
+            }
+            //container.append(table);
+        }
+    /**
+		* Called when authorization server replies.
+        */
+    function handleAuthResult(authResult) {
+        var authButton = jQuery('#authorizeButton');
+        authButton.hide();
+        if (authResult && !authResult.error) {
+            jQuery('#_searchBox').show();
+            jQuery('#_loading').hide();
+            jQuery('#btnUpload').on('click',function(){
+                var searchFilter = jQuery('#textFilter').val();
+                search(searchFilter);
+            });
+        } else {
+            // No access token could be retrieved, show the button to start the authorization flow.
+            authButton.show();
+            
+            authButton.bind('click', function() {
+                gapi.auth.authorize(
+                    {'client_id': CLIENT_ID, 'scope': SCOPES, 'immediate': false},
+                    handleAuthResult);
+            });
+        }
+    }
+    
+    /*
+        search for files
+        */
+    function search(searchFilter){
+        if(!searchFilter) return;
+        var container = jQuery('#_fileList');
+        container.html('');
+        jQuery('#_loading').show();
+        retrieveAllFolders(rootFolderID, function(folders){
+            console.log('folders:',folders);
+            retrieveAllFiles(rootFolderID, folders, searchFilter, function(files){
+                console.log('files:',files);
+                
+                var idList = [];
+                for(var i = 0; i < files.length; i++){
+                    //search for the right properties (sfId)
+                    if(files[i].properties && files[i].properties.length){
+                        var sobjectId = null;
+                        for(var p = 0; p < files[i].properties.length; p++){
+                            if(files[i].properties[p].key === 'sfId'){
+                                idList.push(files[i].properties[p].value);
+                                break;
+                            }
+                        }
+                    }
+                }
+                getAllNames(idList, function(idsToNames){
+                    jQuery('#_loading').hide();
+                    drawResultsTable(files, idsToNames);
+                });
+            });
+        });
+    }
+    
+    /*
+        * gets all files inside a given folder (id)
+        */
+    function retrieveAllFiles(parentFolderId, folders, searchFilter, callback) {
+        
+        var qString = " trashed=false and mimeType != 'application/vnd.google-apps.folder' and title contains '"+searchFilter+"' ";
+        qString += " and ('"+parentFolderId+"' in parents ";
+        if(folders != null && folders.length){
+            for(var i=0;i < folders.length; i++){
+                qString += " or '"+folders[i].id+"' in parents ";
+            }
+        }
+        qString += ')';
+        console.log(qString);
+        var retrievePageOfFiles = function(request, result) {
+            request.execute(function(resp) {
+                result = result.concat(resp.items);
+                var nextPageToken = resp.nextPageToken;
+                if (nextPageToken) {
+                    
+                    request = gapi.client.request({
+                        'path': '/drive/v2/files?q='+encodeURIComponent(qString)+'&pageToken='+nextPageToken,
+                        'method': 'GET',
+                    });
+                    retrievePageOfFiles(request, result);
+                } else {
+                    callback(result);
+                }
+            });
+        }
+        
+        var initialRequest = gapi.client.request({
+            'path': '/drive/v2/files?q='+encodeURIComponent(qString),
+            'method': 'GET',
+        });
+        retrievePageOfFiles(initialRequest, []);
+    }
+    
+    /*
+        * gets all folders children
+        */
+    function retrieveAllFolders(parentFolderId, callback) {
+        var qString = "trashed = false and '"+parentFolderId+"' in parents and mimeType = 'application/vnd.google-apps.folder'";
+        console.log(qString);
+        var retrievePageOfFiles = function(request, result) {
+            request.execute(function(resp) {
+                result = result.concat(resp.items);
+                var nextPageToken = resp.nextPageToken;
+                if (nextPageToken) {
+                    
+                    request = gapi.client.request({
+                        'path': '/drive/v2/files?q='+encodeURIComponent(qString)+'&pageToken='+nextPageToken,
+                        'method': 'GET',
+                    });
+                    retrievePageOfFiles(request, result);
+                } else {
+                    callback(result);
+                }
+            });
+        }
+        
+        var initialRequest = gapi.client.request({
+            'path': '/drive/v2/files?q='+encodeURIComponent(qString),
+            'method': 'GET',
+        });
+        retrievePageOfFiles(initialRequest, []);
+    }
+    
+    /*
+     * gets all the names for each ID
+     */
+    function getAllNames(idList, callback){
+        Visualforce.remoting.Manager.invokeAction(
+            '{!$RemoteAction.GDriveConnectorController.getSobjectNames}', 
+            idList, 
+            function(result, event){
+                if (event.status) {
+                    console.log(result);
+                    callback(result);
+                } else {
+                    alert(event.message);
+                }
+            }, 
+            {escape: true}
+        );
+    }
+    </script>
+    <script type="text/javascript" src="https://apis.google.com/js/client.js?onload=handleClientLoad"></script>
+    </apex:page>

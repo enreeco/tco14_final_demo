@@ -1,0 +1,11 @@
+<apex:page standardController="Account" sidebar="false"
+           showHeader="false"
+           showChat="false"
+           standardStylesheets="false">
+    <apex:outputPanel rendered="{!ISBLANK(Account.Id) == false}">
+        <c:GDriveConnector objId="{!Account.Id}"></c:GDriveConnector>
+    </apex:outputPanel>
+    <apex:outputPanel rendered="{!ISBLANK(Account.Id)}">
+        <b>No account selected</b>
+    </apex:outputPanel>
+</apex:page>

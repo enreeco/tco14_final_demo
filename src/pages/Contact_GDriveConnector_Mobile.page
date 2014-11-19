@@ -1,0 +1,12 @@
+<apex:page standardController="Contact" sidebar="false"
+           showHeader="false"
+           showChat="false"
+           standardStylesheets="false">
+    <apex:outputPanel rendered="{!ISBLANK(Contact.Id) == false}">
+        <h1>Contact's GDrive attachments</h1>
+        <c:GDriveConnector objId="{!Contact.Id}"></c:GDriveConnector>
+    </apex:outputPanel>
+    <apex:outputPanel rendered="{!ISBLANK(Contact.Id)}">
+        <b>No contact selected</b>
+    </apex:outputPanel>
+</apex:page>
